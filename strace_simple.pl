@@ -9,17 +9,19 @@ $source || die "Please specify an source type (pid|exec)\n";
 my $strace = "strace -s 2000 -f -t ";
 if ( $source eq "pid" ) {
 	$arg || die "Please specify a process id\n";
-	$strace .= "-p $arg";
+	$strace = "-p $arg 2>&1 |";
 }
 elsif ( $source eq "exec" ) {
-	$strace .= "$arg";
+	$strace .= "$arg 2>&1 |";
+}
+elsif ( $source eq "file" ) {
+	$strace = $arg;
 }
 else {
 	die "Unsupported source '$source'\n";
 }
 
-
-open(STRACE, "$strace 2>&1 |") || die "Error running strace '$strace' $!\n";
+open(STRACE, $strace) || die "Error running strace '$strace' $!\n";
 my $continues = 0;
 my $prev;
 while (<STRACE>) {
