@@ -3,6 +3,22 @@
 use strict;
 use warnings;
 
+
+# Register a system call
+sub registerCall {
+	my ($pid, $time, $call) = @_;
+
+	if ( $call =~ /^\s*(\w+)\(/ ) {
+		my $syscall = $1;
+		if ( $syscall eq "connect" ) {
+			print "IM CONNECTING!! $call\n";
+		}
+#		print "SYSCALL: $syscall\n";
+	}
+
+}
+
+
 my ($source, $arg) = @ARGV;
 $source || die "Please specify an source type (pid|exec)\n";
 
@@ -41,11 +57,13 @@ while (<STRACE>) {
 	$continues = !/\s+=\s+(\-?[\dxa-f]+)\s*(?: +[A-Z]+ +\([\w.\- ]+\)\s*)?$/;
 	if ( !$continues ) {
 		$pid ||= "main";
-		print "strace: ($pid) ($time) '$call'\n";
+		$time ||= "??";
+#		print "strace: ($pid) ($time) '$call'\n";
+		registerCall($pid, $time, $call);
 		$prev = undef;
 	}
 	else {
-		print "CONT: $_\n";
+#		print "CONT: $_\n";
 		if ( $prev ) {
 			$prev->{data} .= $_;
 		}
