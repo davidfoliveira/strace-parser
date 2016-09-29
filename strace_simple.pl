@@ -2,87 +2,14 @@
 
 use strict;
 use warnings;
+use lib qw(lib/);
+use Strace::Parser;
 
 # TODO:
 #
 #
 
-# Global data
-my %unfinished;
-
-
-
-# Parse a system call argument list
-sub parseArgs {
-	my ($argStr) = @_;
-#	print "PARSE: $argStr\n";
-}
-
-# Register a system call
-sub registerCall {
-	my ($pid, $time, $call) = @_;
-
-	# Is it a resumed call ?
-	if ( $call =~ /\s*<\.{3}\s*(\w+) resumed>\s+(.*)$/ ) {
-		return registerResume($pid, $time, $1, $2);
-	}
-
-	# A normal syscall
-	if ( $call =~ /^\s*(\w+)\((.*?)\) += +(\-?[\dxa-f]+|\?)/ ) {
-		my ($syscall, $argStr) = ($1, $2);
-		my @args = parseArgs($argStr);
-		if ( $syscall eq "connect" ) {
-			print "[$pid] IM CONNECTING!! $call\n";
-		}
-		if ( $syscall eq "nanosleep" ) {
-			print "[$pid] NANOSLEEPING $call\n";
-		}
-#		print "SYSCALL: $syscall\n";
-	}
-
-}
-
-# Register a process exit
-sub registerExit {
-	my ($pid, $time, $signal) = @_;
-}
-
-# Register a received signal
-sub registerSignal {
-	my ($pid, $time, $signal, $data) = @_;
-}
-
-# Register an unfinished system call
-sub registerUnfinished {
-	my ($pid, $time, $call) = @_;
-	unless ( $call =~ /^\s*((\w+)\((.*?))<unfinished[^>]*>\s*$/ ) {
-		print STDERR "Can't get the unfinished syscall name and args from '$call'\n";
-		return undef;
-	}
-
-	if ( $unfinished{$pid} ) {
-		print STDERR "There's already an unfinished call on pid $pid. Overwriting...\n";
-	}
-
-	return $unfinished{$pid} = { time => $time, call => $1, callName => $2 };
-}
-
-# Register a system call resume
-sub registerResume {
-	my ($pid, $time, $callName, $line) = @_;
-	if ( $unfinished{$pid} ) {
-		if ( $unfinished{$pid}->{callName} ne $callName ) {
-			print STDERR "Unfinished syscall name on pid $pid doesn't match ($unfinished{$pid}->{callName} vs $callName), ignoring...\n";
-			return undef;
-		}
-		return registerCall($pid, $unfinished{$pid}->{time}, "$unfinished{$pid}->{call}$line");
-		delete $unfinished{$pid};
-	}
-}
-
-
 # Parse CLI arguments and create an strace call
-
 my ($source, $arg) = @ARGV;
 $source || die "Please specify an source type (pid|exec)\n";
 
@@ -102,58 +29,7 @@ else {
 }
 
 
-# Call strace
-open(STRACE, $strace) || die "Error running strace '$strace' $!\n";
 
-# Read strace output
-my $continues = 0;
-my $prev;
-while (<STRACE>) {
-	s/\r?\n$//g;
-	my ($pid, $time) = $prev ? @{$prev}{qw(pid time)} : (undef, undef);
-
-	# Get the PID
-	$pid = $1 if !$pid && s/^\s*\[pid +(\d+)\] +//;
-	$pid ||= "main";
-
-	# Get the time
-	$time = $1 if !$time && s/^\s*(\d{1,2}:\d{1,2}:\d{1,2}(?:\.\d{6})?) +//;
-	$time ||= "??";
-
-	# The rest of the line
-	my $call = ($prev ? $prev->{data} : "") . $_;
-
-	# Does it continue ?
-	$continues = !/\s+=\s+(\-?[\dxa-f]+|\?)\s*(?:(?:[A-Z_]+ +)?\([^)]*?\))?$/;
-	if ( !$continues ) {
-#		print "strace: ($pid) ($time) '$call'\n";
-		registerCall($pid, $time, $call);
-		$prev = undef;
-	}
-	else {
-		# Unfinished syscalls
-		if ( /<unfinished \.{3}>\s*$/ ) {
-			registerUnfinished($pid, $time, $_);
-			next;
-		}
-		# Process exits
-		elsif ( /^\s*\+{3}\s+exited with\s*(\d+)\s+\+{3}\s*$/ ) {
-			registerExit($pid, $time, $1);
-			next;
-		}
-		# Signals
-		elsif ( /^\s*\-{3}\s+([A-Z]+)(?: (\{.+?\}))?\s+\-{3}\s*$/ ) {
-			registerSignal($pid, $time, $1, $2);
-			next;
-		}
-
-		print "CONT: $_\n";
-		if ( $prev ) {
-			$prev->{data} .= $_;
-		}
-		else {
-			$prev = { pid => $pid, time => $time, data => $_ };
-		}
-	}
-}
-close(STRACE);
+# Create a parser
+my $parser = new Strace::Parser();
+$parser->parse($strace);
