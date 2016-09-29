@@ -2,6 +2,7 @@
 
 use strict;
 use warnings;
+use Strace::Syscalls;
 
 # TODO:
 #
@@ -9,6 +10,18 @@ use warnings;
 
 # Global data
 my %unfinished;
+
+#
+sub new {
+	my $class = shift;
+	my $self = {
+		unfinished => { }
+	};
+
+
+	bless $self, $class;
+	return $self;
+}
 
 
 
@@ -27,17 +40,17 @@ sub registerCall {
 		return registerResume($pid, $time, $1, $2);
 	}
 
+
 	# A normal syscall
 	if ( $call =~ /^\s*(\w+)\((.*?)\) += +(\-?[\dxa-f]+|\?)/ ) {
-		my ($syscall, $argStr) = ($1, $2);
+		my ($callName, $argStr) = ($1, $2);
 		my @args = parseArgs($argStr);
-		if ( $syscall eq "connect" ) {
-			print "[$pid] IM CONNECTING!! $call\n";
+
+		if ( !Strace::Syscalls::register($callName, @args) ) {
+			print STDERR "Could not register system call '$call'. Ignoring...\n";
+			return undef;
 		}
-		if ( $syscall eq "nanosleep" ) {
-			print "[$pid] NANOSLEEPING $call\n";
-		}
-#		print "SYSCALL: $syscall\n";
+		return 1;
 	}
 
 }
