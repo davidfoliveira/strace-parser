@@ -3,6 +3,7 @@ package Strace::Parser;
 use strict;
 use warnings;
 use Strace::Syscall;
+use Strace::Flagset;
 
 
 # The constructor
@@ -11,7 +12,6 @@ sub new {
 	my $self = {
 		unfinished => { }
 	};
-
 
 	bless $self, $class;
 	return $self;
@@ -66,7 +66,7 @@ sub parse {
 				next;
 			}
 
-			print "ML: $_\n";
+#			print "ML: $_\n";
 			if ( $prev ) {
 				$prev->{data} .= $_;
 			}
@@ -96,9 +96,9 @@ sub registerCall {
 	# A normal syscall
 	if ( $call =~ /^\s*(\w+)\((.*?)\) += +(\-?[\dxa-f]+|\?)/ ) {
 		my ($callName, $argStr) = ($1, $2);
-		my @args = parseArgs($argStr);
+		my $args = parseArgs($argStr) || die "Unable to parse syscall argument string '$argStr'\n";
 
-		if ( !Strace::Syscall::register($pid, $time, $callName, \@args) ) {
+		if ( !Strace::Syscall::register($pid, $time, $callName, $args) ) {
 			print STDERR "Could not register system call '$call'. Ignoring...\n";
 			return undef;
 		}
@@ -153,14 +153,94 @@ sub registerResume {
 sub parseArgs {
 	my ($argStr) = @_;
 
+	# Empty string, empty list of arguments
+	return [] if $argStr =~ /^\s*$/;
 
+	$argStr .= ", ";
+	my @args;
+	my $match = 1;
+	my @objSeq;
+	while ( $match ) {
+		# Number
+		if ( $argStr =~ /^([0-9]+)\s*\,\s*/ ) {
+			push @args, $1+0;
+			$argStr =~ s/^([0-9]+|0x[a-f0-9]+)\s*\,\s*//;
+			next;
+		}
+		# Hex number
+		if ( $argStr =~ /^(0x[a-f0-9]+)\s*\,\s*/ ) {
+			push @args, hex($1);
+			$argStr =~ s/^([0-9]+|0x[a-f0-9]+)\s*\,\s*//;
+			next;
+		}
 
+		# String
+		if ( $argStr =~ /^["']/ ) {
+			my $str = parseArgsStr(\$argStr);
+			if ( !defined $str ) {
+				print STDERR "Unable to parse string on the arguments list '$argStr'\n";
+				return undef;
+			}
+			push @args, $str;
+			next;
+		}
 
-#	if ( !$args ) {
-#		print STDERR "Error parsing argument string '$argStr': $@\n";
-#		return undef;
-#	}
-	return $args;
+		# Constant OR
+		if ( $argStr =~ /^([A-Z_]+(\|[A-Z_]+)*)\s*\,\s*/ ) {
+			push @args, new Strace::Flagset($1);
+			$argStr =~ s/^([A-Z_]+(\|[A-Z_]+)*)\s*\,\s*//;
+			next;
+		}
+
+		# Array start
+		if ( $argStr =~ /^\[/ ) {
+			push @objSeq, "[";
+		}
+
+		$match = 0;
+	}
+
+	if ( $argStr !~ /^\s*$/ ) {
+		print STDERR "Error parsing argument string '$argStr': $@\n";
+		return undef;
+	}
+
+	return \@args;
+}
+
+# Parse a string argument
+sub parseArgsStr {
+	my ($strRef) = @_;
+	my $argStr = $$strRef;
+
+	# Find the string delimiter char
+	$argStr =~ /^(["'])/ || return undef;
+	my $strChar = $1;
+	for ( my $x = 1 ; $x < length($argStr) ; $x++ ) {
+		my $char = substr($argStr,$x,1);
+		# Is it a backslash? Ignore the next char, 'cos it's escaped
+		if ( $char eq '\\' ) {
+			$x++;
+		}
+		# The string delimiter char
+		elsif ( $char eq $strChar ) {
+			my $str = substr($argStr,1,$x-1);
+			$str = unescapeStr($str);
+			$$strRef = substr($argStr,$x+1);
+			$$strRef =~ s/\s*\,\s*//;
+			return $str;
+		}
+	}
+
+	return undef;
+
+}
+
+# Unescape a string (FIXME)
+sub unescapeStr {
+	my ($str) = @_;
+	$str =~ s/\\(.)/$1/g;
+	return $str;
 }
 
 

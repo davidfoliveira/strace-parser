@@ -6,7 +6,7 @@ use warnings;
 
 sub register {
     my ($pid, $time, $callName, $args) = @_;
-    print "Register [$pid] at $time $callName ".join('<>',@{$args})."\n";
+    print "Register [$pid] at $time $callName ".join(' <,> ',@{$args})."\n";
 }
 
 1;
