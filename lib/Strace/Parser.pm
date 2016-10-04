@@ -4,6 +4,8 @@ use strict;
 use warnings;
 use Strace::Syscall;
 use Strace::Flagset;
+use Strace::Args::Array;
+use Strace::Args::Object;
 
 
 # The constructor
@@ -156,47 +158,136 @@ sub parseArgs {
 	# Empty string, empty list of arguments
 	return [] if $argStr =~ /^\s*$/;
 
-	$argStr .= ", ";
-	my @args;
+	my $obj = [];
+	my $type = "a";
+	my $mainObj = $obj;
 	my $match = 1;
-	my @objSeq;
+	my @objSeq = ($obj);
+	my @objType = ("Array");
+	my $objK;
+	my $hadComma = 0;
+	sub setValue {
+		my ($target, $val) = @_;
+		print "SET $val on $target ($type = $objK)\n";
+		if ( $type eq "Object" && defined $objK ) {
+			$target->{$objK} = $val;
+			$objK = undef;
+		}
+		else {
+			push @{$target}, $val;
+		}
+	}
 	while ( $match ) {
-		# Number
-		if ( $argStr =~ /^([0-9]+)\s*\,\s*/ ) {
-			push @args, $1+0;
-			$argStr =~ s/^([0-9]+|0x[a-f0-9]+)\s*\,\s*//;
+		# Remove initial spaces
+		$argStr =~ s/^\s+//;
+
+		if ( $type eq "Object" && !defined($objK) ) {
+
+			# String
+			if ( $argStr =~ /^["']/ ) {
+				print "STRINGK: $argStr\n";
+				$objK = parseArgsStr(\$argStr);
+				print "objK: $objK\n";
+				if ( !defined $objK ) {
+					print STDERR "Unable to parse string as an object key '$argStr'\n";
+					return undef;
+				}
+				next;
+			}
+		}
+
+		# A comma
+		if ( $argStr =~ /^\,\s*/ ) {
+			$hadComma = 1;
+			print "COMMA: $argStr\n";
+			$argStr =~ s/^\s*\,\s*//;
 			next;
 		}
-		# Hex number
-		if ( $argStr =~ /^(0x[a-f0-9]+)\s*\,\s*/ ) {
-			push @args, hex($1);
-			$argStr =~ s/^([0-9]+|0x[a-f0-9]+)\s*\,\s*//;
+		# A collon
+		if ( $argStr =~ /^:\s*/ ) {
+			$hadComma = 1;
+			print "COLLON: $argStr\n";
+			$argStr =~ s/\:\s*//;
+			next;
+		}
+		# A comment
+		if ( $argStr =~ /^\/\*.*?\*\// ) {
+			$argStr =~ s/^\/\*.*?\*\///;
+			next;
+		}
+		# Closing an array ?
+		if ( $argStr =~ /^\]/ ) {
+			print "CLOSE: $argStr\n";
+			$obj = pop @objSeq;
+			$type = pop @objType;
+			$argStr =~ s/^\]//;
+			next;
+		}
+		# Closing an object ?
+		if ( $argStr =~ /^\}/ ) {
+			print "OBJCLOSE: $argStr\n";
+			$obj = pop @objSeq;
+			$type = pop @objType;
+			$argStr =~ s/^\}//;
 			next;
 		}
 
+
+		# Number
+		if ( $argStr =~ /^([0-9]+)/ ) {
+			print "NUM: $argStr\n";
+			setValue($obj, $1+0);
+			$argStr =~ s/^([0-9]+|0x[a-f0-9]+)//;
+			next;
+		}
+		# Hex number
+		if ( $argStr =~ /^(0x[a-f0-9]+)/ ) {
+			print "HEX: $argStr\n";
+			setValue($obj, hex($1));
+			$argStr =~ s/^([0-9]+|0x[a-f0-9]+)//;
+			next;
+		}
 		# String
 		if ( $argStr =~ /^["']/ ) {
+			print "STRING: $argStr\n";
 			my $str = parseArgsStr(\$argStr);
 			if ( !defined $str ) {
 				print STDERR "Unable to parse string on the arguments list '$argStr'\n";
 				return undef;
 			}
-			push @args, $str;
+			setValue($obj, $str);
 			next;
 		}
-
 		# Constant OR
-		if ( $argStr =~ /^([A-Z_]+(\|[A-Z_]+)*)\s*\,\s*/ ) {
-			push @args, new Strace::Flagset($1);
-			$argStr =~ s/^([A-Z_]+(\|[A-Z_]+)*)\s*\,\s*//;
+		if ( $argStr =~ /^([A-Z_]+(\|[A-Z_]+)*)/ ) {
+			print "CONST: $argStr\n";
+			setValue($obj, new Strace::Flagset($1));
+			$argStr =~ s/^([A-Z_]+(\|[A-Z_]+)*)//;
 			next;
 		}
-
 		# Array start
 		if ( $argStr =~ /^\[/ ) {
-			push @objSeq, "[";
+			print "OPEN: $argStr\n";
+			push @objSeq, $obj;
+			push @objType, $type;
+			$type = "Array";
+			$obj = new Strace::Args::Array();
+			setValue($objSeq[-1], $obj);
+			$argStr =~ s/^\[//;
+			next;
 		}
-
+		# Object start
+		if ( $argStr =~ /^\{/ ) {
+			print "OBJOPEN: $argStr\n";
+			push @objSeq, $obj;
+			push @objType, $type;
+			$obj = new Strace::Args::Object();
+			$type = "Object";
+			setValue($objSeq[-1], $obj);
+			$objK = undef;
+			$argStr =~ s/^\{//;
+			next;
+		}
 		$match = 0;
 	}
 
@@ -205,7 +296,7 @@ sub parseArgs {
 		return undef;
 	}
 
-	return \@args;
+	return $mainObj;
 }
 
 # Parse a string argument
@@ -239,6 +330,8 @@ sub parseArgsStr {
 # Unescape a string (FIXME)
 sub unescapeStr {
 	my ($str) = @_;
+	$str =~ s/\\n/\n/g;
+	$str =~ s/\\r/\r/g;
 	$str =~ s/\\(.)/$1/g;
 	return $str;
 }
