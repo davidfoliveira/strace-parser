@@ -14,4 +14,11 @@ sub new {
 	return bless $_[0]||[], $class;
 }
 
+# Add one or more items
+sub add {
+	my $self = shift;
+	push @{$self}, @_;
+	return $self;
+}
+
 1;

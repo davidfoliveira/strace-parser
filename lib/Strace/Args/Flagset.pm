@@ -1,4 +1,4 @@
-package Strace::Flagset;
+package Strace::Args::Flagset;
 
 # This module is a representation of binary flag lists (ie: O_WRONLY|O_TRUNC|O|WHTEVR
 

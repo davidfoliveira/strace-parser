@@ -3,7 +3,7 @@ package Strace::Parser;
 use strict;
 use warnings;
 use Strace::Syscall;
-use Strace::Flagset;
+use Strace::Args::Flagset;
 use Strace::Args::Array;
 use Strace::Args::Object;
 
@@ -158,55 +158,64 @@ sub parseArgs {
 	# Empty string, empty list of arguments
 	return [] if $argStr =~ /^\s*$/;
 
-	my $obj = [];
-	my $type = "a";
+	print "PARSING: $argStr\n";
+	my $obj = new Strace::Args::Array();
 	my $mainObj = $obj;
-	my $match = 1;
+	my $type = "Array";
 	my @objSeq = ($obj);
 	my @objType = ("Array");
 	my $objK;
 	my $hadComma = 0;
-	sub setValue {
+	my $setValue = sub {
 		my ($target, $val) = @_;
-		print "SET $val on $target ($type = $objK)\n";
 		if ( $type eq "Object" && defined $objK ) {
-			$target->{$objK} = $val;
+			$target->set($objK, $val);
 			$objK = undef;
 		}
 		else {
-			push @{$target}, $val;
+			$target->add($val);
 		}
-	}
+	};
+	my $match = 1;
 	while ( $match ) {
 		# Remove initial spaces
 		$argStr =~ s/^\s+//;
-
+print "ASTR: $argStr\n";
+		# We're inside an object and we have no key (means that we are going to expect a key)
 		if ( $type eq "Object" && !defined($objK) ) {
 
 			# String
 			if ( $argStr =~ /^["']/ ) {
-				print "STRINGK: $argStr\n";
 				$objK = parseArgsStr(\$argStr);
-				print "objK: $objK\n";
 				if ( !defined $objK ) {
 					print STDERR "Unable to parse string as an object key '$argStr'\n";
 					return undef;
 				}
 				next;
 			}
+			# A word
+			if ( $argStr =~ /^(\w+)\s*=?/ ) {
+				$objK = $1;
+				$argStr =~ s/^\w+\s*=?//;
+				next;
+			}
+
 		}
 
 		# A comma
 		if ( $argStr =~ /^\,\s*/ ) {
 			$hadComma = 1;
-			print "COMMA: $argStr\n";
 			$argStr =~ s/^\s*\,\s*//;
 			next;
 		}
-		# A collon
-		if ( $argStr =~ /^:\s*/ ) {
+		# 3 dots (ignore)
+		if ( $argStr =~ /^\.{3}\s*/ ) {
+			$argStr =~ s/^\.{3}\s*//;
+			next;
+		}
+		# An equals sign
+		if ( $argStr =~ /^=\s*/ ) {
 			$hadComma = 1;
-			print "COLLON: $argStr\n";
 			$argStr =~ s/\:\s*//;
 			next;
 		}
@@ -217,7 +226,6 @@ sub parseArgs {
 		}
 		# Closing an array ?
 		if ( $argStr =~ /^\]/ ) {
-			print "CLOSE: $argStr\n";
 			$obj = pop @objSeq;
 			$type = pop @objType;
 			$argStr =~ s/^\]//;
@@ -225,65 +233,59 @@ sub parseArgs {
 		}
 		# Closing an object ?
 		if ( $argStr =~ /^\}/ ) {
-			print "OBJCLOSE: $argStr\n";
 			$obj = pop @objSeq;
 			$type = pop @objType;
 			$argStr =~ s/^\}//;
 			next;
 		}
 
-
-		# Number
-		if ( $argStr =~ /^([0-9]+)/ ) {
-			print "NUM: $argStr\n";
-			setValue($obj, $1+0);
-			$argStr =~ s/^([0-9]+|0x[a-f0-9]+)//;
+		# Hex number
+		if ( $argStr =~ /^(\-?0x[a-f0-9]+)/ ) {
+			print "hex: $1\n";
+			&$setValue($obj, hex($1));
+			$argStr =~ s/^(\-?0x[a-f0-9]+)//;
 			next;
 		}
-		# Hex number
-		if ( $argStr =~ /^(0x[a-f0-9]+)/ ) {
-			print "HEX: $argStr\n";
-			setValue($obj, hex($1));
-			$argStr =~ s/^([0-9]+|0x[a-f0-9]+)//;
+		# Number
+		if ( $argStr =~ /^(\-?[0-9]+)/ ) {
+			&$setValue($obj, $1+0);
+			$argStr =~ s/^(\-?[0-9]+|0x[a-f0-9]+)//;
 			next;
 		}
 		# String
 		if ( $argStr =~ /^["']/ ) {
-			print "STRING: $argStr\n";
 			my $str = parseArgsStr(\$argStr);
 			if ( !defined $str ) {
 				print STDERR "Unable to parse string on the arguments list '$argStr'\n";
 				return undef;
 			}
-			setValue($obj, $str);
+			&$setValue($obj, $str);
 			next;
 		}
 		# Constant OR
-		if ( $argStr =~ /^([A-Z_]+(\|[A-Z_]+)*)/ ) {
-			print "CONST: $argStr\n";
-			setValue($obj, new Strace::Flagset($1));
-			$argStr =~ s/^([A-Z_]+(\|[A-Z_]+)*)//;
+		if ( $argStr =~ /^((?:[A-Z_]+|0[0-7]{3})(\|(?:[A-Z_]+|0[0-7]{3}))*)/ ) {
+			print "FS: $1\n";
+			&$setValue($obj, new Strace::Args::Flagset($1));
+			$argStr =~ s/^((?:[A-Z_]+|0[0-7]{3})(\|(?:[A-Z_]+|0[0-7]{3}))*)//;
 			next;
 		}
 		# Array start
 		if ( $argStr =~ /^\[/ ) {
-			print "OPEN: $argStr\n";
 			push @objSeq, $obj;
 			push @objType, $type;
-			$type = "Array";
 			$obj = new Strace::Args::Array();
-			setValue($objSeq[-1], $obj);
+			&$setValue($objSeq[-1], $obj);
+			$type = "Array";
 			$argStr =~ s/^\[//;
 			next;
 		}
 		# Object start
 		if ( $argStr =~ /^\{/ ) {
-			print "OBJOPEN: $argStr\n";
 			push @objSeq, $obj;
 			push @objType, $type;
 			$obj = new Strace::Args::Object();
+			&$setValue($objSeq[-1], $obj);
 			$type = "Object";
-			setValue($objSeq[-1], $obj);
 			$objK = undef;
 			$argStr =~ s/^\{//;
 			next;
