@@ -2,9 +2,9 @@ package Strace::Args::Array;
 
 # This module is a representation of binary flag lists (ie: O_WRONLY|O_TRUNC|O|WHTEVR
 
-use overload
+#use overload
 	# String convertion
-	'""' => sub { return "[".join(', ',@{$_[0]})."]" };
+#	'""' => sub { return "[".join(', ',@{$_[0]})."]" };
 
 
 # Constructor

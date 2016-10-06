@@ -162,8 +162,8 @@ sub parseArgs {
 	my $obj = new Strace::Args::Array();
 	my $mainObj = $obj;
 	my $type = "Array";
-	my @objSeq = ($obj);
-	my @objType = ("Array");
+	my @objSeq = ();
+	my @objType = ();
 	my $objK;
 	my $hadComma = 0;
 	my $setValue = sub {
@@ -205,6 +205,14 @@ print "ASTR: $argStr\n";
 		# A comma
 		if ( $argStr =~ /^\,\s*/ ) {
 			$hadComma = 1;
+			if ( $type eq "Object" && defined $objK ) {
+				print "INSIDE AND OBJECT, found a comma where was supposed to find a colon/equals sign: $argStr\n";
+				print "REPLACING OBJECT BY AN ARRAY: ".join(', ',@objSeq)."\n";
+				my $par = $objSeq[-1];
+#				$par->[-1] = new Strace::Args::Array();
+				print "PAR OBJS: ".join(', ',@{$par})."\n";
+				$type = "Array";
+			}
 			$argStr =~ s/^\s*\,\s*//;
 			next;
 		}
